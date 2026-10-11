@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Value a US stock with a bear, normal and bull DCF, weighted by your own probabilities.">
+<title>Three-Case DCF</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: analyst workbench. Inputs on the left like a model's input tab, live results pinned on the right. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #142030;
+  --muted: #5b6878;
+  --line: #dbe1e8;
+  --accent: #2346b8;
+  --accent-soft: #e6ecfb;
+  --bear: #b4433a;
+  --base: #4a5f7d;
+  --bull: #2f7d4f;
+  --warn: #9a6200;
+  --warn-soft: #fdf3e1;
+  --bad-soft: #fbeceb;
+  --input-bg: #f8fafc;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1218; --surface: #151c25; --ink: #e5eaf1; --muted: #94a1b2; --line: #28323e;
+    --accent: #86a5ff; --accent-soft: #1c2742; --bear: #ef8a80; --base: #a3b4cc; --bull: #74c795;
+    --warn: #f0b54f; --warn-soft: #2d2412; --bad-soft: #2e1918; --input-bg: #10161e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1218; --surface: #151c25; --ink: #e5eaf1; --muted: #94a1b2; --line: #28323e;
+  --accent: #86a5ff; --accent-soft: #1c2742; --bear: #ef8a80; --base: #a3b4cc; --bull: #74c795;
+  --warn: #f0b54f; --warn-soft: #2d2412; --bad-soft: #2e1918; --input-bg: #10161e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 28px 48px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 2rem; line-height: 1.1; }
+h2 { font-size: 1.15rem; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+header.top { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; margin-bottom: 24px; }
+header.top p { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.modes { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
+.modes { flex-wrap: wrap; }
+.modes button { white-space: nowrap; font: inherit; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 8px 14px; border-radius: 7px; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.modes button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+.modes button:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.soon { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 99px; background: var(--warn-soft); color: var(--warn); }
+
+.grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; min-width: 0; }
+.stack { display: grid; gap: 20px; min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.panel-head p { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
+
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px 16px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-size: 0.82rem; color: var(--muted); font-weight: 500; }
+.field.wide { grid-column: 1 / -1; }
+.inbox { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--input-bg); }
+.inbox:focus-within { border-color: var(--accent); }
+.inbox input, .inbox select { flex: 1; min-width: 0; font: inherit; font-family: var(--font-num); font-size: 0.92rem; border: 0; background: transparent; color: var(--ink); padding: 8px 10px; outline: none; }
+.inbox input[type="text"] { font-family: var(--font-body); }
+.inbox .unit { color: var(--muted); font-size: 0.78rem; padding-right: 10px; white-space: nowrap; }
+.inbox.bad { border-color: var(--bear); }
+.subhead { margin: 20px 0 10px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.subhead:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.derived { font-size: 0.85rem; color: var(--muted); }
+.derived b { color: var(--ink); font-weight: 600; }
+
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+.scen th, .scen td { padding: 6px 6px; text-align: left; vertical-align: middle; }
+.scen thead th { font-size: 0.82rem; font-weight: 600; }
+.scen tbody th { font-size: 0.85rem; font-weight: 500; color: var(--muted); }
+.scen { table-layout: fixed; min-width: 360px; }
+.scen thead th:first-child { width: 34%; }
+.scen td .inbox input { width: 100%; }
+.scen td .inbox { min-width: 64px; }
+.scen tr.prob th { color: var(--ink); font-weight: 600; }
+.scen tr.prob td, .scen tr.prob th { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.scen tr.prob + tr td, .scen tr.prob + tr th { padding-top: 10px; }
+.tag { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.bear .dot, .dot.bear { background: var(--bear); }
+.base .dot, .dot.base { background: var(--base); }
+.bull .dot, .dot.bull { background: var(--bull); }
+.dot.wtd { background: var(--accent); }
+.probsum { font-size: 0.85rem; }
+.probsum.ok { color: var(--bull); }
+.probsum.off { color: var(--bear); font-weight: 600; }
+.opts { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; margin-top: 16px; font-size: 0.9rem; }
+.opts label { display: inline-flex; gap: 8px; align-items: center; }
+.opts select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--input-bg); color: var(--ink); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: inherit; font-size: 0.85rem; font-weight: 600; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.results { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); }
+@media (max-width: 920px) { .results { position: static; } }
+.headline { display: grid; gap: 4px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.big { font-family: var(--font-display); font-size: 2.8rem; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.vs { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; color: var(--muted); font-size: 0.92rem; }
+.chip { font-family: var(--font-num); font-size: 0.82rem; font-weight: 500; padding: 2px 9px; border-radius: 99px; }
+.chip.up { background: color-mix(in srgb, var(--bull) 16%, transparent); color: var(--bull); }
+.chip.down { background: color-mix(in srgb, var(--bear) 16%, transparent); color: var(--bear); }
+.cases { display: grid; gap: 0; margin-top: 4px; }
+.case { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.case:last-child { border-bottom: 0; }
+.case .name { font-weight: 600; }
+.case .val { font-family: var(--font-num); font-size: 1.05rem; text-align: right; font-variant-numeric: tabular-nums; }
+.case .meta { grid-column: 1 / -1; font-size: 0.8rem; color: var(--muted); font-family: var(--font-num); }
+.alert { font-size: 0.85rem; padding: 8px 12px; border-radius: 8px; background: var(--warn-soft); color: var(--warn); margin-top: 8px; }
+.alert.bad { background: var(--bad-soft); color: var(--bear); }
+.ff { width: 100%; height: auto; display: block; margin-top: 8px; }
+.ff text { font-family: var(--font-num); font-size: 11px; }
+
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button { font: inherit; font-size: 0.85rem; font-weight: 600; padding: 6px 12px; border-radius: 99px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-color: var(--ink); }
+.fin th, .fin td { padding: 6px 10px; text-align: right; font-family: var(--font-num); font-size: 0.85rem; white-space: nowrap; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line); }
+.fin th:first-child, .fin td:first-child { text-align: left; font-family: var(--font-body); color: var(--muted); position: sticky; left: 0; background: var(--surface); }
+.fin thead th { color: var(--muted); font-weight: 600; font-family: var(--font-body); }
+.fin tr.key td { font-weight: 600; color: var(--ink); }
+.fin tr.key td:first-child { color: var(--ink); }
+.bridge { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 16px; }
+.bridge div { display: grid; gap: 2px; }
+.bridge span:first-child { font-size: 0.78rem; color: var(--muted); }
+.bridge span:last-child { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.sens td, .sens th { padding: 7px 10px; text-align: center; font-family: var(--font-num); font-size: 0.85rem; font-variant-numeric: tabular-nums; border: 1px solid var(--line); }
+.sens th { color: var(--muted); font-weight: 500; background: var(--input-bg); }
+.sens td.mid { outline: 2px solid var(--accent); outline-offset: -2px; font-weight: 600; }
+.sens td.na { color: var(--muted); }
+.ticker-panel { display: grid; gap: 12px; }
+.ticker-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ticker-row .inbox { flex: 1 1 200px; opacity: 0.6; }
+.ticker-row .btn { opacity: 0.6; cursor: not-allowed; }
+footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80ch; }
+@media (prefers-reduced-motion: no-preference) { .big { transition: color 0.2s; } }
+</style>
+
+<style>html{color-scheme:light}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">Probability weighted FCFF DCF</div>
+      <h1>Three-Case DCF</h1>
+      <p>Enter a company's financials and your bear, normal and bull assumptions. The model values each case, then weights them by the probabilities you set.</p>
+    </div>
+    <div class="modes" role="tablist" aria-label="Input mode">
+      <button id="mode-manual" role="tab" aria-selected="true">Manual entry</button>
+      <button id="mode-ticker" role="tab" aria-selected="false">Ticker lookup <span class="soon">Coming soon</span></button>
+    </div>
+  </header>
+
+  <section class="panel ticker-panel" id="ticker-panel" hidden>
+    <h2>Look up a US stock by ticker</h2>
+    <p class="derived" style="margin:0">Automatic lookup is coming soon. It will pull the latest statements, share price, diluted shares, beta and the 10-year Treasury yield, then fill in the manual sheet for you to adjust. For now, enter the numbers by hand.</p>
+    <div class="ticker-row">
+      <div class="inbox"><input id="ticker" type="text" placeholder="e.g. MSFT" disabled aria-label="Ticker"></div>
+      <button class="btn" disabled>Look up</button>
+      <button class="btn" id="go-manual" style="opacity:1;cursor:pointer">Go to manual entry</button>
+    </div>
+  </section>
+
+  <div class="grid" id="manual-view">
+    <div class="stack">
+      <section class="panel" aria-labelledby="h-company">
+        <div class="panel-head">
+          <div>
+            <h2 id="h-company">Company financials</h2>
+            <p>Dollar amounts in millions. Use the latest fiscal year from the 10-K.</p>
+          </div>
+          <div class="btns">
+            <button class="btn" id="load-example">Load example</button>
+            <button class="btn" id="clear-all">Clear all</button>
+          </div>
+        </div>
+        <div id="company-fields"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-scen">
+        <div class="panel-head">
+          <div>
+            <h2 id="h-scen">Scenarios</h2>
+            <p>Growth and margin move in a straight line from year 1 to the final forecast year.</p>
+          </div>
+          <span class="probsum num" id="probsum"></span>
+        </div>
+        <div class="scroll">
+          <table class="scen">
+            <thead><tr><th></th>
+              <th class="bear"><span class="tag"><span class="dot"></span>Bear</span></th>
+              <th class="base"><span class="tag"><span class="dot"></span>Normal</span></th>
+              <th class="bull"><span class="tag"><span class="dot"></span>Bull</span></th>
+            </tr></thead>
+            <tbody id="scen-body"></tbody>
+          </table>
+        </div>
+        <div class="opts">
+          <label for="years">Forecast years
+            <select id="years"><option value="5">5</option><option value="10">10</option></select>
+          </label>
+          <label for="midyear"><input type="checkbox" id="midyear" checked> Mid-year discounting</label>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel results" aria-labelledby="h-results">
+      <div class="headline">
+        <div class="eyebrow" id="h-results">Probability weighted value per share</div>
+        <div class="big" id="weighted">–</div>
+        <div class="vs" id="vs"></div>
+        <div id="top-alerts"></div>
+      </div>
+      <div class="cases" id="cases"></div>
+      <div class="eyebrow" style="margin-top:12px">Football field</div>
+      <svg class="ff" id="ff" viewBox="0 0 520 170" role="img" aria-label="Value per share by scenario against the current price"></svg>
+    </aside>
+  </div>
+
+  <div class="stack" style="margin-top:24px" id="detail-view">
+    <section class="panel" aria-labelledby="h-fcff">
+      <div class="panel-head">
+        <div>
+          <h2 id="h-fcff">Free cash flow forecast</h2>
+          <p>FCFF = EBIT × (1 − tax) + D&amp;A − capex − increase in working capital. $ millions.</p>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Scenario">
+          <button role="tab" data-s="bear" aria-selected="false"><span class="dot bear"></span>Bear</button>
+          <button role="tab" data-s="base" aria-selected="true"><span class="dot base"></span>Normal</button>
+          <button role="tab" data-s="bull" aria-selected="false"><span class="dot bull"></span>Bull</button>
+        </div>
+      </div>
+      <div class="scroll"><table class="fin" id="fin"></table></div>
+      <div class="bridge" id="bridge"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-sens">
+      <div class="panel-head">
+        <div>
+          <h2 id="h-sens">Sensitivity, normal case</h2>
+          <p>Value per share as WACC and terminal growth shift. The outlined cell is the normal case.</p>
+        </div>
+      </div>
+      <div class="scroll"><table class="sens" id="sens"></table></div>
+    </section>
+  </div>
+
+  <footer>
+    Educational tool, not investment advice. Results depend entirely on the inputs entered; nothing here is a recommendation to buy or sell any security. The example company is illustrative and not a real business.
+  </footer>
+</div>
+
+<script>
+// Valuation engine: pure math, no page code. Inputs in, values out.
+// All money in $ millions, shares in millions, rates as decimals (0.05 = 5%).
+(function (root) {
+  function lerp(a, b, t, n) {
+    return n <= 1 ? b : a + (b - a) * (t - 1) / (n - 1);
+  }
+
+  // Cost of capital from CAPM and market-value weights.
+  function capmWacc(c) {
+    var ke = c.riskFree + c.beta * c.erp;
+    var e = c.price * c.shares;
+    var d = c.debt;
+    var kdAfterTax = c.costOfDebt * (1 - c.taxRate);
+    var wacc = e + d > 0 ? (e * ke + d * kdAfterTax) / (e + d) : ke;
+    return { ke: ke, kdAfterTax: kdAfterTax, equityWeight: e / (e + d), debtWeight: d / (e + d), wacc: wacc };
+  }
+
+  // One FCFF DCF for one scenario.
+  // c: company inputs; s: scenario drivers; opts: { years, midYear, waccOverride }
+  function runScenario(c, s, opts) {
+    var n = opts.years;
+    var wacc = opts.waccOverride != null ? opts.waccOverride : capmWacc(c).wacc + s.waccAdj;
+    var g = s.terminalGrowth;
+    var rows = [];
+    var prevRev = c.revenue;
+    var sumPv = 0;
+    for (var t = 1; t <= n; t++) {
+      var growth = lerp(s.growthStart, s.growthEnd, t, n);
+      var margin = lerp(s.marginStart, s.marginEnd, t, n);
+      var rev = prevRev * (1 + growth);
+      var ebit = rev * margin;
+      var nopat = ebit * (1 - c.taxRate);
+      var da = rev * c.daPct;
+      var capex = rev * c.capexPct;
+      var dNwc = (rev - prevRev) * c.nwcPct;
+      var fcff = nopat + da - capex - dNwc;
+      var period = opts.midYear ? t - 0.5 : t;
+      var df = 1 / Math.pow(1 + wacc, period);
+      var pv = fcff * df;
+      sumPv += pv;
+      rows.push({ year: t, growth: growth, revenue: rev, margin: margin, ebit: ebit, nopat: nopat, da: da, capex: capex, dNwc: dNwc, fcff: fcff, df: df, pv: pv });
+      prevRev = rev;
+    }
+    var last = rows[n - 1];
+    var valid = wacc > g;
+    var tv = valid ? last.fcff * (1 + g) / (wacc - g) : NaN;
+    var tvDf = 1 / Math.pow(1 + wacc, n);
+    var pvTv = tv * tvDf;
+    var ev = sumPv + pvTv;
+    var equity = ev - c.debt + c.cash - c.minority;
+    var perShare = equity / c.shares;
+    var ebitdaN = last.ebit + last.da;
+    return {
+      wacc: wacc, terminalGrowth: g, rows: rows, sumPv: sumPv, tv: tv, pvTv: pvTv, ev: ev,
+      equity: equity, perShare: perShare, tvShare: pvTv / ev,
+      impliedExitMultiple: tv / ebitdaN, valid: valid
+    };
+  }
+
+  // Three scenarios, probability weighted.
+  function runAll(c, scenarios, opts) {
+    var out = {};
+    var weighted = 0;
+    var probSum = 0;
+    ['bear', 'base', 'bull'].forEach(function (k) {
+      var r = runScenario(c, scenarios[k], opts);
+      out[k] = r;
+      weighted += scenarios[k].prob * r.perShare;
+      probSum += scenarios[k].prob;
+    });
+    out.probSum = probSum;
+    out.weighted = weighted;
+    out.upside = c.price > 0 ? weighted / c.price - 1 : NaN;
+    out.capm = capmWacc(c);
+    return out;
+  }
+
+  // Base-case value per share across WACC and terminal growth shifts.
+  function sensitivity(c, s, opts, steps) {
+    var base = capmWacc(c).wacc + s.waccAdj;
+    return steps.map(function (dw) {
+      return steps.map(function (dg) {
+        var w = base + dw;
+        var g = s.terminalGrowth + dg;
+        if (w <= g) return { wacc: w, g: g, value: NaN };
+        var r = runScenario(c, Object.assign({}, s, { terminalGrowth: g }), Object.assign({}, opts, { waccOverride: w }));
+        return { wacc: w, g: g, value: r.perShare };
+      });
+    });
+  }
+
+  var api = { capmWacc: capmWacc, runScenario: runScenario, runAll: runAll, sensitivity: sensitivity };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.DCF = api;
+})(typeof window !== "undefined" ? window : this);
+</script>
+<script>
+(function () {
+  var COMPANY = [
+    { group: 'Company', fields: [
+      { id: 'name', label: 'Company name', type: 'text', wide: true },
+      { id: 'price', label: 'Current share price', unit: '$' },
+      { id: 'shares', label: 'Diluted shares outstanding', unit: 'm' },
+    ]},
+    { group: 'Operations, last fiscal year', fields: [
+      { id: 'revenue', label: 'Revenue', unit: '$m' },
+      { id: 'taxRate', label: 'Tax rate', unit: '%', pct: true },
+      { id: 'daPct', label: 'D&A', unit: '% of revenue', pct: true },
+      { id: 'capexPct', label: 'Capex', unit: '% of revenue', pct: true },
+      { id: 'nwcPct', label: 'Working capital investment', unit: '% of revenue growth', pct: true },
+    ]},
+    { group: 'Balance sheet', fields: [
+      { id: 'debt', label: 'Total debt', unit: '$m' },
+      { id: 'cash', label: 'Cash and investments', unit: '$m' },
+      { id: 'minority', label: 'Minority interest and preferred', unit: '$m' },
+    ]},
+    { group: 'Cost of capital', derived: true, fields: [
+      { id: 'riskFree', label: '10-year Treasury yield', unit: '%', pct: true },
+      { id: 'beta', label: 'Beta', unit: '' },
+      { id: 'erp', label: 'Equity risk premium', unit: '%', pct: true },
+      { id: 'costOfDebt', label: 'Pre-tax cost of debt', unit: '%', pct: true },
+    ]},
+  ];
+  var SCEN = [
+    { id: 'prob', label: 'Probability, %', pct: true },
+    { id: 'growthStart', label: 'Revenue growth, year 1, %', pct: true },
+    { id: 'growthEnd', label: 'Revenue growth, final year, %', pct: true },
+    { id: 'marginStart', label: 'EBIT margin, year 1, %', pct: true },
+    { id: 'marginEnd', label: 'EBIT margin, final year, %', pct: true },
+    { id: 'waccAdj', label: 'WACC vs CAPM, +/− pts', pct: true },
+    { id: 'terminalGrowth', label: 'Terminal growth, %', pct: true },
+  ];
+  var KEYS = ['bear', 'base', 'bull'];
+  var NAMES = { bear: 'Bear', base: 'Normal', bull: 'Bull' };
+  var EXAMPLE = {
+    name: 'Example Co. (illustrative)', price: 34, shares: 500, revenue: 10000, taxRate: 21, daPct: 4, capexPct: 5, nwcPct: 10,
+    debt: 3000, cash: 1000, minority: 0, riskFree: 4.2, beta: 1.1, erp: 5, costOfDebt: 5.5,
+    bear_prob: 25, bear_growthStart: 2, bear_growthEnd: 1, bear_marginStart: 13, bear_marginEnd: 11, bear_waccAdj: 1, bear_terminalGrowth: 1.5,
+    base_prob: 50, base_growthStart: 7, base_growthEnd: 4, base_marginStart: 15, base_marginEnd: 16, base_waccAdj: 0, base_terminalGrowth: 2.5,
+    bull_prob: 25, bull_growthStart: 11, bull_growthEnd: 7, bull_marginStart: 16, bull_marginEnd: 19, bull_waccAdj: -0.5, bull_terminalGrowth: 3,
+    years: '5', midyear: true
+  };
+  var STORE = 'three-case-dcf-v1';
+  var fin = 'base';
+
+  function el(tag, attrs, html) { var e = document.createElement(tag); for (var k in attrs || {}) e.setAttribute(k, attrs[k]); if (html != null) e.innerHTML = html; return e; }
+  function inputBox(id, unit, type) {
+    var box = el('div', { 'class': 'inbox' });
+    var inp = el('input', { id: id, type: type || 'text', inputmode: type === 'text' ? 'text' : 'decimal', autocomplete: 'off' });
+    if (type !== 'text') inp.setAttribute('data-num', '1');
+    box.appendChild(inp);
+    if (unit) box.appendChild(el('span', { 'class': 'unit' }, unit));
+    return box;
+  }
+
+  // Build the company form
+  var cf = document.getElementById('company-fields');
+  COMPANY.forEach(function (g) {
+    var head = el('div', { 'class': 'subhead' }, '<span class="eyebrow">' + g.group + '</span>' + (g.derived ? '<span class="derived" id="wacc-derived"></span>' : ''));
+    cf.appendChild(head);
+    var grid = el('div', { 'class': 'fields' });
+    g.fields.forEach(function (f) {
+      var wrap = el('div', { 'class': 'field' + (f.wide ? ' wide' : '') });
+      wrap.appendChild(el('label', { 'for': f.id }, f.label));
+      wrap.appendChild(inputBox(f.id, f.unit, f.type === 'text' ? 'text' : 'num'));
+      grid.appendChild(wrap);
+    });
+    cf.appendChild(grid);
+  });
+
+  // Build the scenario table
+  var sb = document.getElementById('scen-body');
+  SCEN.forEach(function (f) {
+    var tr = el('tr', f.id === 'prob' ? { 'class': 'prob' } : {});
+    tr.appendChild(el('th', { scope: 'row' }, f.label));
+    KEYS.forEach(function (k) {
+      var td = el('td');
+      var box = inputBox(k + '_' + f.id, f.unit, 'num');
+      box.querySelector('input').setAttribute('aria-label', NAMES[k] + ' ' + f.label);
+      td.appendChild(box);
+      tr.appendChild(td);
+    });
+    sb.appendChild(tr);
+  });
+
+  var allNumIds = [];
+  COMPANY.forEach(function (g) { g.fields.forEach(function (f) { if (f.type !== 'text') allNumIds.push(f.id); }); });
+  KEYS.forEach(function (k) { SCEN.forEach(function (f) { allNumIds.push(k + '_' + f.id); }); });
+  var pctIds = {};
+  COMPANY.forEach(function (g) { g.fields.forEach(function (f) { if (f.pct) pctIds[f.id] = 1; }); });
+  KEYS.forEach(function (k) { SCEN.forEach(function (f) { pctIds[k + '_' + f.id] = 1; }); });
+  var optional = { minority: 1, cash: 1, debt: 1, name: 1 };
+
+  function $(id) { return document.getElementById(id); }
+  function parse(v) { v = String(v).replace(/[,\s$%]/g, ''); if (v === '') return NaN; return Number(v); }
+
+  function setValues(vals) {
+    $('name').value = vals.name || '';
+    allNumIds.forEach(function (id) { $(id).value = vals[id] == null || vals[id] === '' ? '' : vals[id]; });
+    $('years').value = vals.years || '5';
+    $('midyear').checked = vals.midyear !== false;
+  }
+  function getRaw() {
+    var o = { name: $('name').value, years: $('years').value, midyear: $('midyear').checked };
+    allNumIds.forEach(function (id) { o[id] = $(id).value; });
+    return o;
+  }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify(getRaw())); } catch (e) {} }
+  function load() { try { var s = localStorage.getItem(STORE); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
+
+  // Formatting
+  function money(v, d) { if (!isFinite(v)) return '–'; var s = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); return (v < 0 ? '−' : '') + s; }
+  function perShare(v) { return isFinite(v) ? (v < 0 ? '−$' : '$') + money(Math.abs(v), 2) : '–'; }
+  function pct(v, d) { return isFinite(v) ? (v < 0 ? '−' : '') + Math.abs(v * 100).toFixed(d == null ? 1 : d) + '%' : '–'; }
+  function signedPct(v) { return isFinite(v) ? (v >= 0 ? '+' : '−') + Math.abs(v * 100).toFixed(1) + '%' : '–'; }
+
+  function compute() {
+    var raw = getRaw();
+    var missing = [];
+    var c = {};
+    allNumIds.forEach(function (id) {
+      var v = parse(raw[id]);
+      var box = $(id).parentNode;
+      var bad = String(raw[id]).trim() !== '' && !isFinite(v);
+      if (!isFinite(v) && optional[id] && String(raw[id]).trim() === '') v = 0;
+      box.classList.toggle('bad', bad);
+      if (!isFinite(v)) missing.push(id);
+      c[id] = pctIds[id] ? v / 100 : v;
+    });
+    var scen = {};
+    KEYS.forEach(function (k) { scen[k] = {}; SCEN.forEach(function (f) { scen[k][f.id] = c[k + '_' + f.id]; }); });
+    return { raw: raw, c: c, scen: scen, missing: missing, opts: { years: Number(raw.years), midYear: raw.midyear } };
+  }
+
+  function label(id) {
+    var found = null;
+    COMPANY.forEach(function (g) { g.fields.forEach(function (f) { if (f.id === id) found = f.label; }); });
+    if (found) return found;
+    var p = id.split('_');
+    SCEN.forEach(function (f) { if (f.id === p[1]) found = NAMES[p[0]] + ' ' + f.label.replace(/, [^,]*$/, '').toLowerCase(); });
+    return found || id;
+  }
+
+  function render() {
+    var m = compute();
+    save();
+    var c = m.c;
+
+    // Probability check
+    var ps = KEYS.reduce(function (a, k) { return a + (isFinite(m.scen[k].prob) ? m.scen[k].prob : 0); }, 0);
+    var psEl = $('probsum');
+    var probOk = Math.abs(ps - 1) < 0.0005;
+    psEl.textContent = 'Probabilities total ' + (ps * 100).toFixed(1).replace(/\.0$/, '') + '%';
+    psEl.className = 'probsum num ' + (probOk ? 'ok' : 'off');
+
+    // Derived WACC line
+    var capmReady = ['price', 'shares', 'riskFree', 'beta', 'erp', 'costOfDebt', 'taxRate'].every(function (id) { return m.missing.indexOf(id) < 0; });
+    $('wacc-derived').innerHTML = capmReady ? (function () { var w = DCF.capmWacc(c); return 'Cost of equity <b class="num">' + pct(w.ke, 2) + '</b> · WACC <b class="num">' + pct(w.wacc, 2) + '</b>'; })() : '';
+
+    var alerts = $('top-alerts');
+    alerts.innerHTML = '';
+    if (m.missing.length) {
+      $('weighted').textContent = '–';
+      $('vs').innerHTML = '';
+      alerts.innerHTML = '<div class="alert">Fill in ' + m.missing.slice(0, 3).map(label).join(', ') + (m.missing.length > 3 ? ' and ' + (m.missing.length - 3) + ' more' : '') + ' to see the valuation.</div>';
+      $('cases').innerHTML = '';
+      $('ff').innerHTML = '';
+      $('fin').innerHTML = '';
+      $('bridge').innerHTML = '';
+      $('sens').innerHTML = '';
+      return;
+    }
+    if (c.shares <= 0) { alerts.innerHTML = '<div class="alert bad">Diluted shares must be above zero.</div>'; return; }
+
+    var r = DCF.runAll(c, m.scen, m.opts);
+    var allValid = KEYS.every(function (k) { return r[k].valid; });
+
+    if (!probOk) {
+      $('weighted').textContent = '–';
+      $('vs').innerHTML = '';
+      alerts.innerHTML = '<div class="alert bad">Probabilities add up to ' + (ps * 100).toFixed(1) + '%. Adjust them to total 100% to get the weighted value.</div>';
+    } else if (!allValid) {
+      $('weighted').textContent = '–';
+      $('vs').innerHTML = '';
+    } else {
+      $('weighted').textContent = perShare(r.weighted);
+      var up = r.upside;
+      $('vs').innerHTML = '<span>vs <span class="num">' + perShare(c.price) + '</span> current price' + (raw(m).name ? ' · ' + esc(m.raw.name) : '') + '</span>' +
+        (isFinite(up) ? '<span class="chip ' + (up >= 0 ? 'up' : 'down') + '">' + signedPct(up) + (up >= 0 ? ' upside' : ' downside') + '</span>' : '');
+    }
+
+    // Case rows
+    var html = '';
+    KEYS.forEach(function (k) {
+      var s = r[k];
+      html += '<div class="case ' + k + '"><span class="name tag"><span class="dot"></span>' + NAMES[k] + ' <span class="derived num">' + pct(m.scen[k].prob, 0) + '</span></span>' +
+        '<span class="val">' + (s.valid ? perShare(s.perShare) : '–') + '</span>' +
+        '<span class="meta">WACC ' + pct(s.wacc, 2) + ' · g ' + pct(s.terminalGrowth, 1) + (s.valid ? ' · TV ' + pct(s.tvShare, 0) + ' of EV · exit ' + s.impliedExitMultiple.toFixed(1) + '× EBITDA' : '') + '</span>';
+      if (!s.valid) html += '<div class="alert bad" style="grid-column:1/-1">Terminal growth must be below WACC.</div>';
+      else if (s.tvShare > 0.75) html += '<div class="alert" style="grid-column:1/-1">Terminal value is ' + pct(s.tvShare, 0) + ' of enterprise value, so this case leans heavily on the terminal assumptions.</div>';
+      html += '</div>';
+    });
+    $('cases').innerHTML = html;
+
+    drawFootball(r, c, probOk && allValid);
+    drawFin(r, c);
+    drawSens(c, m.scen.base, m.opts);
+  }
+  function raw(m) { return m.raw; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (ch) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]; }); }
+
+  function drawFootball(r, c, showW) {
+    var pts = [];
+    KEYS.forEach(function (k) { if (r[k].valid) pts.push({ k: k, v: r[k].perShare, label: NAMES[k] }); });
+    if (showW) pts.push({ k: 'wtd', v: r.weighted, label: 'Weighted' });
+    var svg = $('ff');
+    if (!pts.length) { svg.innerHTML = ''; return; }
+    var vals = pts.map(function (p) { return p.v; }).concat([c.price]);
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.2 || 1;
+    lo -= pad; hi += pad;
+    var L = 78, R = 500, W = R - L;
+    var X = function (v) { return L + (v - lo) / (hi - lo) * W; };
+    var rowH = 30, y0 = 18;
+    var out = '';
+    // Ticks
+    var step = niceStep((hi - lo) / 5);
+    var t0 = Math.ceil(lo / step) * step;
+    var bottom = y0 + pts.length * rowH;
+    for (var t = t0; t <= hi; t += step) {
+      out += '<line x1="' + X(t) + '" x2="' + X(t) + '" y1="' + (y0 - 6) + '" y2="' + bottom + '" stroke="var(--line)"/>';
+      out += '<text x="' + X(t) + '" y="' + (bottom + 16) + '" text-anchor="middle" fill="var(--muted)">$' + fmtTick(t) + '</text>';
+    }
+    // Bar from lowest to highest scenario
+    var sv = pts.filter(function (p) { return p.k !== 'wtd'; }).map(function (p) { return p.v; });
+    pts.forEach(function (p, i) {
+      var y = y0 + i * rowH + rowH / 2;
+      var col = p.k === 'wtd' ? 'var(--accent)' : 'var(--' + p.k + ')';
+      var x0 = X(Math.min(c.price, p.v)), x1 = X(Math.max(c.price, p.v));
+      out += '<rect x="' + x0 + '" y="' + (y - 5) + '" width="' + Math.max(x1 - x0, 1) + '" height="10" rx="3" fill="' + col + '" fill-opacity="0.22"/>';
+      out += '<circle cx="' + X(p.v) + '" cy="' + y + '" r="6" fill="' + col + '"/>';
+      out += '<text x="' + (L - 10) + '" y="' + (y + 4) + '" text-anchor="end" fill="var(--ink)">' + p.label + '</text>';
+      var right = X(p.v) > R - 60;
+      out += '<text x="' + (X(p.v) + (right ? -10 : 10)) + '" y="' + (y - 8) + '" text-anchor="' + (right ? 'end' : 'start') + '" fill="var(--muted)">' + perShare(p.v) + '</text>';
+    });
+    out += '<line x1="' + X(c.price) + '" x2="' + X(c.price) + '" y1="' + (y0 - 8) + '" y2="' + bottom + '" stroke="var(--ink)" stroke-dasharray="4 3" stroke-width="1.2"/>';
+    out += '<text x="' + X(c.price) + '" y="' + (y0 - 10) + '" text-anchor="middle" fill="var(--ink)">Price ' + perShare(c.price) + '</text>';
+    var h = bottom + 26;
+    svg.setAttribute('viewBox', '0 -6 520 ' + (h + 6));
+    svg.innerHTML = out;
+  }
+  function niceStep(raw) { var p = Math.pow(10, Math.floor(Math.log10(raw))); var n = raw / p; return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * p; }
+  function fmtTick(v) { return Math.abs(v) >= 100 ? Math.round(v).toLocaleString('en-US') : (Math.round(v * 100) / 100).toString(); }
+
+  function drawFin(r, c) {
+    var s = r[fin];
+    var rows = s.rows;
+    var head = '<thead><tr><th>$ millions</th><th>Last FY</th>' + rows.map(function (x) { return '<th>Year ' + x.year + '</th>'; }).join('') + '</tr></thead>';
+    function line(name, f, base, key) { return '<tr' + (key ? ' class="key"' : '') + '><td>' + name + '</td><td>' + (base == null ? '' : base) + '</td>' + rows.map(function (x) { return '<td>' + f(x) + '</td>'; }).join('') + '</tr>'; }
+    var body = '<tbody>' +
+      line('Revenue', function (x) { return money(x.revenue); }, money(c.revenue)) +
+      line('Growth', function (x) { return pct(x.growth); }) +
+      line('EBIT margin', function (x) { return pct(x.margin); }) +
+      line('EBIT', function (x) { return money(x.ebit); }) +
+      line('NOPAT', function (x) { return money(x.nopat); }) +
+      line('+ D&amp;A', function (x) { return money(x.da); }) +
+      line('− Capex', function (x) { return money(x.capex); }) +
+      line('− Increase in NWC', function (x) { return money(x.dNwc); }) +
+      line('Free cash flow (FCFF)', function (x) { return money(x.fcff); }, null, true) +
+      line('Discount factor', function (x) { return x.df.toFixed(3); }) +
+      line('Present value', function (x) { return money(x.pv); }) +
+      '</tbody>';
+    $('fin').innerHTML = head + body;
+    var b = [
+      ['Sum of PV, forecast', money(s.sumPv)],
+      ['Terminal value', s.valid ? money(s.tv) : '–'],
+      ['PV of terminal value', s.valid ? money(s.pvTv) : '–'],
+      ['Enterprise value', s.valid ? money(s.ev) : '–'],
+      ['− Debt', money(c.debt)],
+      ['+ Cash', money(c.cash)],
+      ['− Minority and preferred', money(c.minority)],
+      ['Equity value', s.valid ? money(s.equity) : '–'],
+      ['Value per share', s.valid ? perShare(s.perShare) : '–'],
+    ];
+    $('bridge').innerHTML = b.map(function (x) { return '<div><span>' + x[0] + '</span><span>' + x[1] + '</span></div>'; }).join('');
+  }
+
+  function drawSens(c, s, opts) {
+    var steps = [-0.01, -0.005, 0, 0.005, 0.01];
+    var grid = DCF.sensitivity(c, s, opts, steps);
+    var head = '<thead><tr><th>WACC ↓ · g →</th>' + grid[0].map(function (x) { return '<th>' + pct(x.g, 1) + '</th>'; }).join('') + '</tr></thead>';
+    var body = '<tbody>' + grid.map(function (row, i) {
+      return '<tr><th>' + pct(row[0].wacc, 2) + '</th>' + row.map(function (x, j) {
+        var cls = (i === 2 && j === 2 ? 'mid' : '') + (isFinite(x.value) ? '' : ' na');
+        return '<td class="' + cls + '">' + (isFinite(x.value) ? perShare(x.value) : 'n/m') + '</td>';
+      }).join('') + '</tr>';
+    }).join('') + '</tbody>';
+    $('sens').innerHTML = head + body;
+  }
+
+  // Events
+  document.addEventListener('input', function (e) { if (e.target.closest('#manual-view')) render(); });
+  $('years').addEventListener('change', render);
+  $('midyear').addEventListener('change', render);
+  $('load-example').addEventListener('click', function () { setValues(EXAMPLE); render(); });
+  $('clear-all').addEventListener('click', function () { setValues({ years: $('years').value, midyear: $('midyear').checked }); render(); });
+  document.querySelectorAll('.tabs button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      fin = b.getAttribute('data-s');
+      document.querySelectorAll('.tabs button').forEach(function (x) { x.setAttribute('aria-selected', String(x === b)); });
+      render();
+    });
+  });
+  function setMode(mode) {
+    var t = mode === 'ticker';
+    $('mode-ticker').setAttribute('aria-selected', String(t));
+    $('mode-manual').setAttribute('aria-selected', String(!t));
+    $('ticker-panel').hidden = !t;
+    $('manual-view').hidden = t;
+    $('detail-view').hidden = t;
+  }
+  $('mode-ticker').addEventListener('click', function () { setMode('ticker'); });
+  $('mode-manual').addEventListener('click', function () { setMode('manual'); });
+  $('go-manual').addEventListener('click', function () { setMode('manual'); });
+
+  setValues(load() || EXAMPLE);
+  render();
+})();
+</script>
+
+</body>
+</html>
