@@ -115,3 +115,20 @@ test('retries statements without the history limit when the plan rejects it, and
   assert.strictEqual(d.fields.revenue, 400000);
   await assert.rejects(lookup('TEST', 'k', fakeFetch({ profile: premium })), (e) => e.code === 'plan_limit' && /profile: Premium Query Parameter: limit/.test(e.message));
 });
+
+test('sets starting scenarios from the company\'s own margin and growth', async () => {
+  const d = await lookup('TEST', 'k', fakeFetch());
+  // Last EBIT margin 32%, 3-year growth 4.6%
+  assert.deepStrictEqual(d.scenarios, {
+    bear: { growthStart: 0.5, growthEnd: 2, marginStart: 32, marginEnd: 27 },
+    base: { growthStart: 4.5, growthEnd: 4, marginStart: 32, marginEnd: 32 },
+    bull: { growthStart: 7.5, growthEnd: 5.5, marginStart: 32, marginEnd: 35 },
+  });
+});
+
+test('flags capex far above D&A', async () => {
+  const heavy = [{ date: '2025-09-27', depreciationAndAmortization: 34e9, capitalExpenditure: -64e9, changeInWorkingCapital: -4e9 }];
+  const p = (b) => ({ ok: true, status: 200, text: async () => JSON.stringify(b) });
+  const d = await lookup('TEST', 'k', fakeFetch({ 'cash-flow-statement': p(heavy) }));
+  assert.ok(d.notes.some((n) => /Capex \(16% of revenue\) is well above D&A \(8\.5%\)/.test(n)));
+});

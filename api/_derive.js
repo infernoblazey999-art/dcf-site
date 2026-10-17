@@ -109,13 +109,33 @@ function derive(profile, income, balance, cashflow, riskFree) {
     if (avgDebt > 0) notes.push('Interest over average debt was not usable, so the cost of debt is the 10-year yield plus 1.5 points.');
   }
 
-  // Context for setting the scenarios. These do not fill any input.
+  // The company's recent history, shown next to the scenarios.
   var history = {};
   var n = Math.min(income.length - 1, 3);
   var rOld = n > 0 ? num(income[n].revenue) : NaN;
   if (n > 0 && revenue > 0 && rOld > 0) history.revenueCagr = round((Math.pow(revenue / rOld, 1 / n) - 1) * 100, 1);
   history.cagrYears = n;
   if (revenue > 0) history.ebitMargin = round(num(is0.operatingIncome) / revenue * 100, 1);
+
+  // Starting scenarios from that history, so a lookup never leaves another
+  // company's growth and margins in place. Probabilities, WACC and terminal
+  // growth stay as the user set them.
+  var scenarios = null;
+  if (history.ebitMargin != null && isFinite(history.ebitMargin)) {
+    var m = history.ebitMargin;
+    var g = history.revenueCagr != null ? clamp(history.revenueCagr, -5, 30) : 3;
+    var half = function (x) { return Math.round(x * 2) / 2; };
+    var fade = function (x) { return half((x + 3) / 2); }; // halfway to 3% by the final year
+    scenarios = {
+      bear: { growthStart: half(g - 4), growthEnd: fade(g - 4), marginStart: half(m), marginEnd: half(m - 5) },
+      base: { growthStart: half(g), growthEnd: fade(g), marginStart: half(m), marginEnd: half(m) },
+      bull: { growthStart: half(g + 3), growthEnd: fade(g + 3), marginStart: half(m), marginEnd: half(m + 3) }
+    };
+    notes.push('Scenario growth and margins start from the company\'s history: normal keeps the last EBIT margin and ' + history.cagrYears + '-year growth, bear is 4 points slower with margins 5 points lower by the final year, bull is 3 points faster with margins 3 points higher. Growth fades halfway to 3% by the final year. These are a starting point for your own view.');
+  }
+  if (fields.capexPct != null && fields.daPct != null && fields.capexPct > 1.5 * fields.daPct) {
+    notes.push('Capex (' + fields.capexPct + '% of revenue) is well above D&A (' + fields.daPct + '%). The model keeps capex at that share of revenue every year and in the terminal value, which lowers the value if today\'s spending is temporary. Consider a lower long-run capex.');
+  }
 
   var currency = is0.reportedCurrency || profile.currency;
   if (currency && currency !== 'USD') {
@@ -132,6 +152,7 @@ function derive(profile, income, balance, cashflow, riskFree) {
     symbol: profile.symbol,
     fields: fields,
     history: history,
+    scenarios: scenarios,
     notes: notes,
     warnings: warnings,
     missing: missing,
