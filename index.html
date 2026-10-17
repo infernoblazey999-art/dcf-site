@@ -146,8 +146,15 @@ table { border-collapse: collapse; width: 100%; }
 .sens td.na { color: var(--muted); }
 .ticker-panel { display: grid; gap: 12px; }
 .ticker-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.ticker-row .inbox { flex: 1 1 200px; opacity: 0.6; }
-.ticker-row .btn { opacity: 0.6; cursor: not-allowed; }
+.ticker-row .inbox { flex: 1 1 200px; }
+.ticker-row .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ticker-row .btn[disabled] { opacity: 0.6; cursor: progress; }
+.lookup-msg:empty { display: none; }
+.lookup-info { display: grid; gap: 6px; font-size: 0.85rem; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); margin-bottom: 12px; }
+.lookup-info[hidden] { display: none; }
+.lookup-info ul { margin: 0; padding-left: 18px; color: var(--muted); }
+.lookup-info .alert { margin-top: 0; }
+.inbox.fetched input { box-shadow: inset 3px 0 0 var(--accent); }
 footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80ch; }
 @media (prefers-reduced-motion: no-preference) { .big { transition: color 0.2s; } }
 </style>
@@ -164,18 +171,19 @@ footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80
     </div>
     <div class="modes" role="tablist" aria-label="Input mode">
       <button id="mode-manual" role="tab" aria-selected="true">Manual entry</button>
-      <button id="mode-ticker" role="tab" aria-selected="false">Ticker lookup <span class="soon">Coming soon</span></button>
+      <button id="mode-ticker" role="tab" aria-selected="false">Ticker lookup</button>
     </div>
   </header>
 
   <section class="panel ticker-panel" id="ticker-panel" hidden>
     <h2>Look up a US stock by ticker</h2>
-    <p class="derived" style="margin:0">Automatic lookup is coming soon. It will pull the latest statements, share price, diluted shares, beta and the 10-year Treasury yield, then fill in the manual sheet for you to adjust. For now, enter the numbers by hand.</p>
+    <p class="derived" style="margin:0">Pulls the latest annual statements, share price, diluted shares, beta and the 10-year Treasury yield, then fills in the company financials for you to check and adjust. Your scenarios and probabilities stay as you set them.</p>
     <div class="ticker-row">
-      <div class="inbox"><input id="ticker" type="text" placeholder="e.g. MSFT" disabled aria-label="Ticker"></div>
-      <button class="btn" disabled>Look up</button>
-      <button class="btn" id="go-manual" style="opacity:1;cursor:pointer">Go to manual entry</button>
+      <div class="inbox"><input id="ticker" type="text" placeholder="e.g. MSFT" aria-label="Ticker" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="10"></div>
+      <button class="btn primary" id="lookup-go">Look up</button>
+      <button class="btn" id="go-manual">Go to manual entry</button>
     </div>
+    <div class="alert lookup-msg" id="lookup-msg" role="status"></div>
   </section>
 
   <div class="grid" id="manual-view">
@@ -184,13 +192,14 @@ footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80
         <div class="panel-head">
           <div>
             <h2 id="h-company">Company financials</h2>
-            <p>Dollar amounts in millions. Use the latest fiscal year from the 10-K.</p>
+            <p>Dollar amounts in millions. Use the latest fiscal year from the 10-K, or fill these from a ticker lookup.</p>
           </div>
           <div class="btns">
             <button class="btn" id="load-example">Load example</button>
             <button class="btn" id="clear-all">Clear all</button>
           </div>
         </div>
+        <div class="lookup-info" id="lookup-info" hidden></div>
         <div id="company-fields"></div>
       </section>
 
@@ -692,6 +701,54 @@ footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80
   $('mode-ticker').addEventListener('click', function () { setMode('ticker'); });
   $('mode-manual').addEventListener('click', function () { setMode('manual'); });
   $('go-manual').addEventListener('click', function () { setMode('manual'); });
+
+  // Ticker lookup: asks the site's server for the numbers, then fills the company inputs.
+  var LOOKUP_FIELDS = ['name', 'price', 'shares', 'revenue', 'taxRate', 'daPct', 'capexPct', 'nwcPct', 'debt', 'cash', 'minority', 'riskFree', 'beta', 'costOfDebt'];
+  function esc(t) { return String(t).replace(/[&<>"]/g, function (ch) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]; }); }
+  function lookupMsg(text, bad) { var m = $('lookup-msg'); m.textContent = text || ''; m.className = 'alert lookup-msg' + (bad ? ' bad' : ''); }
+  function clearFetched() { document.querySelectorAll('.inbox.fetched').forEach(function (b) { b.classList.remove('fetched'); }); }
+  function applyLookup(d) {
+    clearFetched();
+    LOOKUP_FIELDS.forEach(function (id) {
+      var v = d.fields[id];
+      if (v == null) { $(id).value = ''; return; }
+      $(id).value = v;
+      $(id).parentNode.classList.add('fetched');
+    });
+    if ($('erp').value.trim() === '') $('erp').value = 5;
+    var h = d.history || {};
+    var bits = [];
+    if (h.revenueCagr != null) bits.push(h.cagrYears + '-year revenue growth <b class="num">' + h.revenueCagr + '%</b> a year');
+    if (h.ebitMargin != null) bits.push('last EBIT margin <b class="num">' + h.ebitMargin + '%</b>');
+    var info = '<div><b>' + esc(d.symbol) + '</b> loaded' + (d.asOf.fiscalYearEnd ? ' from the fiscal year ended ' + esc(d.asOf.fiscalYearEnd) : '') +
+      (d.asOf.riskFreeDate ? ', 10-year yield as of ' + esc(d.asOf.riskFreeDate) : '') + '. Marked fields came from the lookup; check them before relying on the result.</div>';
+    if (bits.length) info += '<div>For setting your scenarios: ' + bits.join(', ') + '.</div>';
+    (d.warnings || []).forEach(function (w) { info += '<div class="alert bad">' + esc(w) + '</div>'; });
+    if (d.missing && d.missing.length) info += '<div class="alert">Not found, please fill in: ' + d.missing.map(function (id) { return esc(label(id)); }).join(', ') + '.</div>';
+    if (d.notes && d.notes.length) info += '<ul>' + d.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>';
+    $('lookup-info').innerHTML = info;
+    $('lookup-info').hidden = false;
+  }
+  function runLookup() {
+    var t = $('ticker').value.trim().toUpperCase();
+    if (!t) { lookupMsg('Enter a ticker first.', true); return; }
+    var btn = $('lookup-go');
+    btn.disabled = true; btn.textContent = 'Looking up…';
+    lookupMsg('');
+    fetch('/api/lookup?ticker=' + encodeURIComponent(t))
+      .then(function (res) {
+        var type = res.headers.get('content-type') || '';
+        if (type.indexOf('json') < 0) throw new Error('Ticker lookup only works on the published website, not in this preview.');
+        return res.json().then(function (d) { if (!res.ok) throw new Error(d.message || 'Lookup failed.'); return d; });
+      })
+      .then(function (d) { applyLookup(d); render(); setMode('manual'); $('lookup-info').scrollIntoView({ block: 'nearest' }); })
+      .catch(function (e) { lookupMsg(e && e.message && !/Failed to fetch|NetworkError|Load failed/i.test(e.message) ? e.message : 'Could not reach the lookup service. Check your connection and try again.', true); })
+      .then(function () { btn.disabled = false; btn.textContent = 'Look up'; });
+  }
+  $('lookup-go').addEventListener('click', runLookup);
+  $('ticker').addEventListener('keydown', function (e) { if (e.key === 'Enter') runLookup(); });
+  $('load-example').addEventListener('click', function () { clearFetched(); $('lookup-info').hidden = true; });
+  $('clear-all').addEventListener('click', function () { clearFetched(); $('lookup-info').hidden = true; });
 
   setValues(load() || EXAMPLE);
   render();
