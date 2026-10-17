@@ -716,12 +716,15 @@ footer { margin-top: 28px; color: var(--muted); font-size: 0.8rem; max-width: 80
       $(id).parentNode.classList.add('fetched');
     });
     if ($('erp').value.trim() === '') $('erp').value = 5;
+    if (d.scenarios) KEYS.forEach(function (k) {
+      for (var f in d.scenarios[k]) { $(k + '_' + f).value = d.scenarios[k][f]; $(k + '_' + f).parentNode.classList.add('fetched'); }
+    });
     var h = d.history || {};
     var bits = [];
     if (h.revenueCagr != null) bits.push(h.cagrYears + '-year revenue growth <b class="num">' + h.revenueCagr + '%</b> a year');
     if (h.ebitMargin != null) bits.push('last EBIT margin <b class="num">' + h.ebitMargin + '%</b>');
     var info = '<div><b>' + esc(d.symbol) + '</b> loaded' + (d.asOf.fiscalYearEnd ? ' from the fiscal year ended ' + esc(d.asOf.fiscalYearEnd) : '') +
-      (d.asOf.riskFreeDate ? ', 10-year yield as of ' + esc(d.asOf.riskFreeDate) : '') + '. Marked fields came from the lookup; check them before relying on the result.</div>';
+      (d.asOf.riskFreeDate ? ', 10-year yield as of ' + esc(d.asOf.riskFreeDate) : '') + '. Marked fields came from the lookup, including starting growth and margins for each scenario; check them before relying on the result.</div>';
     if (bits.length) info += '<div>For setting your scenarios: ' + bits.join(', ') + '.</div>';
     (d.warnings || []).forEach(function (w) { info += '<div class="alert bad">' + esc(w) + '</div>'; });
     if (d.missing && d.missing.length) info += '<div class="alert">Not found, please fill in: ' + d.missing.map(function (id) { return esc(label(id)); }).join(', ') + '.</div>';
