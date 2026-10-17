@@ -23,7 +23,8 @@ async function fmp(fetchFn, key, path, params) {
     throw new LookupError(503, 'rate_limited', 'The data provider\'s daily request limit was reached. Try again later or enter the numbers by hand.');
   }
   if (res.status === 402 || (!Array.isArray(body) && /premium|subscription|upgrade/i.test(text))) {
-    throw new LookupError(502, 'plan_limit', 'This ticker or data set is not included in the current data plan.');
+    var said = String(body && body['Error Message'] || text).replace(/\s+/g, ' ').slice(0, 200);
+    throw new LookupError(502, 'plan_limit', 'This ticker or data set is not included in the current data plan (' + path + ': ' + said + ').');
   }
   if (!res.ok || !Array.isArray(body)) {
     throw new LookupError(502, 'provider_error', 'The data provider returned an unexpected response (' + res.status + ').');
@@ -53,6 +54,18 @@ async function riskFree(fetchFn, key) {
   return null;
 }
 
+// Some plans reject the history-length setting. If so, ask again with the provider's default length.
+async function statements(fetchFn, key, path, params) {
+  try {
+    return await fmp(fetchFn, key, path, params);
+  } catch (e) {
+    if (e.code !== 'plan_limit' || params.limit == null) throw e;
+    var rest = Object.assign({}, params);
+    delete rest.limit;
+    return fmp(fetchFn, key, path, rest);
+  }
+}
+
 async function lookup(ticker, key, fetchFn) {
   if (!key) throw new LookupError(503, 'not_configured', 'Ticker lookup is not switched on yet: the site has no data provider key.');
   var symbol = String(ticker || '').trim().toUpperCase();
@@ -62,9 +75,9 @@ async function lookup(ticker, key, fetchFn) {
   var qa = { symbol: symbol, period: 'annual', limit: 5 };
   var results = await Promise.all([
     fmp(fetchFn, key, 'profile', q),
-    fmp(fetchFn, key, 'income-statement', qa),
-    fmp(fetchFn, key, 'balance-sheet-statement', { symbol: symbol, period: 'annual', limit: 2 }),
-    fmp(fetchFn, key, 'cash-flow-statement', qa),
+    statements(fetchFn, key, 'income-statement', qa),
+    statements(fetchFn, key, 'balance-sheet-statement', { symbol: symbol, period: 'annual', limit: 2 }),
+    statements(fetchFn, key, 'cash-flow-statement', qa),
     riskFree(fetchFn, key)
   ]);
   var profile = results[0][0];

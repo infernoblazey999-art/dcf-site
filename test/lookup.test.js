@@ -106,3 +106,12 @@ test('server response: cached a day on success, never cached on error', async ()
     assert.strictEqual(bad.headers['Cache-Control'], 'no-store');
   } finally { global.fetch = realFetch; }
 });
+
+test('retries statements without the history limit when the plan rejects it, and passes the provider\'s reason on', async () => {
+  const premium = { ok: false, status: 402, text: async () => '{"Error Message":"Premium Query Parameter: limit"}' };
+  const base = fakeFetch();
+  const f = async (url) => (url.includes('income-statement') && url.includes('limit=') ? premium : base(url));
+  const d = await lookup('TEST', 'k', f);
+  assert.strictEqual(d.fields.revenue, 400000);
+  await assert.rejects(lookup('TEST', 'k', fakeFetch({ profile: premium })), (e) => e.code === 'plan_limit' && /profile: Premium Query Parameter: limit/.test(e.message));
+});
